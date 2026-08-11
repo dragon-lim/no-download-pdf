@@ -1,2 +1,81 @@
-# no-download-pdf
-Description  A web-based PDF invoice viewer/editor that lets teams preview, edit, and save invoices directly in the browser — no download-reupload cycle.
+# invoice-pdf-hub
+
+[한국어](./README.md) | [日本語](./README.ja.md)
+
+> A web-based PDF invoice viewer/editor that lets teams preview, edit, and save invoices directly in the browser — no download-reupload cycle.
+
+## 배경
+
+인턴으로 근무하며 상품 배송 관련 업무를 할 때, 송장 PDF 파일을 다루는 과정이 매우 비효율적이었습니다.
+
+1. 송장 PDF를 시스템에 업로드
+2. 수정이 필요하면 파일을 다운로드
+3. 로컬에서 수정
+4. 수정본을 다시 업로드
+5. 다음 담당자도 확인/수정하려면 2~4번을 반복
+
+이 다운로드 → 수정 → 재업로드 과정을 없애고, **웹 브라우저 안에서 미리보기부터 수정, 저장까지 끝낼 수 있는 시스템**을 만드는 것이 이 프로젝트의 목표입니다.
+
+## 주요 기능
+
+- [ ] **최근 파일 미리보기 (최대 10개)** — 최근 업로드/수정된 파일 목록을 썸네일과 함께 표시
+- [ ] **다운로드 없는 미리보기** — 현재 업로드된 파일을 다운로드하지 않고 브라우저에서 바로 확인
+- [ ] **웹 내 편집 및 저장 (stretch goal)** — 미리보기 화면에서 바로 내용을 수정하고 저장하면, 수정된 파일이 최종본으로 DB/스토리지에 반영
+
+## AI 활용 여부
+
+핵심 기능(미리보기·편집·저장)은 AI 없이 표준 웹 개발 + PDF 처리 기술로 구현 가능합니다. 다만 여유가 되면 아래와 같은 **선택적 AI 기능**을 추가할 계획입니다.
+
+- OCR + LLM 기반으로 송장 내 필드(상품명, 수량, 금액, 배송지 등) 자동 추출
+- 추출된 데이터를 폼에 자동 채움
+- 이상 값(예: 금액 0원, 잘못된 주소 형식) 자동 감지
+
+## 기술 스택
+
+| 영역 | 기술 |
+|---|---|
+| 언어 | Python |
+| 웹 프레임워크 | Django |
+| PDF 처리 | PyMuPDF (fitz) — 렌더링, 텍스트 추출, 편집(redaction) |
+| DB | SQLite (개발용) → PostgreSQL (운영 전환 고려) |
+| 파일 저장 | 로컬 디스크 (개발용) → AWS S3 / MinIO (운영 전환 고려) |
+| 프론트엔드 | Django Template + Bootstrap (브라우저 내장 PDF 뷰어 활용) |
+
+## 아키텍처
+
+```
+브라우저 (Django Template)
+     │  업로드 / 조회 / 수정 요청
+     ▼
+API 서버 (Django)
+     │
+     ├──▶ 메타데이터 DB (파일 정보, 버전 이력)
+     ├──▶ 파일 저장소 (PDF 원본 및 버전별 파일)
+     └──▶ (선택) AI 추출 서비스 — OCR + LLM
+```
+
+- 파일 자체는 DB가 아닌 별도 저장소에 저장하고, DB에는 메타데이터(파일명, 버전, 업로더, 수정시각, 경로)만 저장
+- 수정할 때마다 기존 파일을 덮어쓰지 않고 새 버전으로 저장 → 누가 언제 수정했는지 이력 추적 가능
+
+## 개발 로드맵
+
+1. **MVP**: 파일 업로드 + 최근 10개 목록 + 브라우저 내 미리보기
+2. 버전 이력 기능 추가 (누가 언제 수정했는지 기록)
+3. 웹 내 편집 기능 (PyMuPDF의 redaction 기능으로 필드 위치 찾아 텍스트 교체 후 새 버전 저장)
+4. (선택) AI 기반 필드 자동 추출 기능 추가
+
+## 편집 기능 구현 방향
+
+PDF는 Word 문서처럼 구조화된 텍스트가 아니기 때문에, 자유로운 텍스트 편집보다는 **정해진 필드(배송지, 수량 등)의 값을 찾아서 교체하는 방식**으로 구현합니다.
+
+```python
+doc = fitz.open(file_path)
+page = doc[0]
+rect = page.search_for("기존 텍스트")[0]
+page.add_redact_annot(rect)
+page.apply_redactions()
+page.insert_text(rect.tl, "새 텍스트", fontsize=10)
+doc.save(new_version_path)
+```
+
+송장 양식이 매번 동일한 레이아웃이라면, 필드 좌표를 비교적 고정적으로 잡을 수 있어 안정적으로 동작할 것으로 예상합니다.
